@@ -1,6 +1,8 @@
 //! Page-touch helpers. All "realistic" benchmarks touch every page
 //! of the buffer to model real workloads (networking, file I/O, etc).
 
+#![allow(dead_code)]
+
 use std::hint::black_box;
 use std::mem::MaybeUninit;
 
