@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+- Workload benchmark suite generic over `BufStrategy`: TCP echo, file hashing, Zipf-framed RPC, LZ4 compress/decompress, and RGBA tile blur benches alongside the log-shipper pipeline.
+- `scripts/bench.py --tables` emits one markdown table per Criterion group into `target/criterion-tables.md`.
+
 ## [0.7.0] - 2026-06-27
 
 ### Changed
