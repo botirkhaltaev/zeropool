@@ -6,7 +6,9 @@
 #   ZEROPOOL_SCALE_OPS=100000 scripts/bench-full.sh
 #
 # Each group is run separately so the output stays readable. Groups that
-# require the `bench` feature are flagged.
+# require the `bench` feature are flagged. After the micro groups it runs
+# the workload benches (pipeline, tcp, file_hash, framing, compress, tiles)
+# and emits target/criterion-tables.md via scripts/bench.py.
 
 set -euo pipefail
 
@@ -36,6 +38,22 @@ cargo bench -- contention
 # 7. Stats overhead: ZeroPool only.
 cargo bench -- stats_overhead
 
+# 8. Workload benchmarks: real-workload pipelines generic over the buffer
+#    strategy; comparison crates require the bench feature.
+cargo bench --features bench --bench pipeline
+cargo bench --features bench --bench tcp
+cargo bench --features bench --bench file_hash
+cargo bench --features bench --bench framing
+cargo bench --features bench --bench compress
+cargo bench --features bench --bench tiles
+
+# 9. Emit markdown tables from the Criterion estimates.
+if command -v uv >/dev/null 2>&1; then
+    uv run --project scripts scripts/bench.py --no-run --tables
+else
+    python3 scripts/bench.py --no-run --tables
+fi
+
 echo
-echo "Done. Estimates written to target/criterion/. See BENCHMARKS.md for"
-echo "how to read the JSON files and how to update the README tables."
+echo "Done. Estimates written to target/criterion/ and tables to"
+echo "target/criterion-tables.md. See BENCHMARKS.md for how to read them."
