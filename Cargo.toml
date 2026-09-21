@@ -101,6 +101,10 @@ tcmalloc-better = { version = "0.1.19", optional = true }
 
 [dev-dependencies]
 criterion = "0.7"
+crossbeam-channel = "0.5"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+crc32fast = "1"
 
 [features]
 default = []
@@ -111,4 +115,8 @@ bench-alloc-jemalloc = ["dep:tikv-jemallocator"]
 
 [[bench]]
 name = "pool"
+harness = false
+
+[[bench]]
+name = "pipeline"
 harness = false

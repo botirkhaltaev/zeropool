@@ -1,5 +1,7 @@
 //! Shared size and thread-count constants.
 
+#![allow(dead_code)]
+
 /// Standard buffer sizes used across most benchmarks.
 pub const SIZES: &[usize] =
     &[4 * 1024, 16 * 1024, 64 * 1024, 256 * 1024, 1024 * 1024, 4 * 1024 * 1024];

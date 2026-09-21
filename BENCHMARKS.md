@@ -153,6 +153,37 @@ Stats are disabled by default. Enabling them at `MT8` adds ~70 µs to a
 ~90 µs workload, which is significant. Use them in dev/profiling, not in
 production hot paths.
 
+## Workload benchmarks
+
+`pipeline_16k` and `pipeline_256k` groups (the `pipeline` bench target)
+model a log-shipper pipeline: P producer threads serialize newline-delimited
+JSON log records into fixed-size batches (16 KiB or 256 KiB) and send them
+over a bounded `crossbeam-channel` to P consumer threads, which CRC32 the
+payload, count lines, and drop the buffer. Every buffer is therefore freed
+on a different thread than the one that allocated it — the case where
+thread-local reuse breaks down.
+
+The workload is generic over a `BufStrategy` so all strategies run
+identical code:
+
+| Strategy | What it measures |
+|---|---|
+| `zeropool` | shared pool, TLS caches |
+| `vec_fresh` | `vec![0; len]` per batch — kernel cost every time |
+| `vec_reuse` | per-thread free list; buffers freed cross-thread land in the consumer's stash |
+| `bytes` | fresh `BytesMut` per batch (`--features bench`) |
+| `opool` | one `opool` pool per power-of-two class (`--features bench`) |
+| `object_pool` | one `object_pool` pool per class (`--features bench`) |
+
+Thread counts sweep `PIPELINE_THREADS` (2/4/8/16 total threads, split
+evenly between producers and consumers); each producer ships 64 batches per
+iteration. Thread spawn cost is excluded via `iter_custom` + a release
+barrier.
+
+```bash
+cargo bench --bench pipeline --features bench
+```
+
 ## Reproducing these numbers
 
 ```bash
