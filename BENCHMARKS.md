@@ -155,33 +155,36 @@ production hot paths.
 
 ## Workload benchmarks
 
-`pipeline_16k` and `pipeline_256k` groups (the `pipeline` bench target)
-model a log-shipper pipeline: P producer threads serialize newline-delimited
-JSON log records into fixed-size batches (16 KiB or 256 KiB) and send them
-over a bounded `crossbeam-channel` to P consumer threads, which CRC32 the
-payload, count lines, and drop the buffer. Every buffer is therefore freed
-on a different thread than the one that allocated it — the case where
-thread-local reuse breaks down.
+These groups model real workloads end to end rather than isolated
+alloc/drop. Every workload is generic over `BufStrategy`, so ZeroPool, raw
+`Vec`, per-thread `Vec` reuse, `bytes::BytesMut`, `opool`, and
+`object_pool` (the last three with `--features bench`) all run identical
+code; each acquires one `len`-byte buffer per unit of work and drops it
+when done. Timing excludes thread spawn via `iter_custom` + a release
+barrier; threads sweep `WORKLOAD_THREADS` (1/2/4/8 workers) unless noted.
 
-The workload is generic over a `BufStrategy` so all strategies run
-identical code:
+| Group | Bench target | Workload | Buffer pattern |
+|---|---|---|---|
+| `pipeline_16k` / `pipeline_256k` | `pipeline` | Log shipper: P producers serialize JSON log records into 16 KiB / 256 KiB batches, ship them over a bounded channel to P consumers which checksum and drop | One buffer per batch, freed cross-thread |
+| `tcp_echo_16k` / `tcp_echo_64k` | `tcp` | Loopback echo server: N concurrent clients send length-prefixed requests; a handler per connection reads each frame, CRC32s it, replies | One buffer per request on the handler thread |
+| `file_hash_256k` / `file_hash_4m` | `file_hash` | Workers stream 8 × 8 MiB files through the page cache in 256 KiB / 4 MiB chunks and CRC32 each chunk (files partitioned across workers) | One buffer per chunk read |
+| `framing_zipf` | `framing` | Length-prefixed RPC frames with Zipf-distributed payload sizes (1 KiB–256 KiB, small frames dominate); encode + decode + CRC per frame | One buffer per frame, mixed sizes |
+| `lz4_256k` / `lz4_1m` | `compress` | Workers compress a text-ish block with LZ4 into one buffer and decompress into a second | Two live buffers per block |
+| `tiles_rgba` | `tiles` | Horizontal 3-tap box blur over 512×512 RGBA (1 MiB) tiles | One full-frame buffer per tile |
 
-| Strategy | What it measures |
-|---|---|
-| `zeropool` | shared pool, TLS caches |
-| `vec_fresh` | `vec![0; len]` per batch — kernel cost every time |
-| `vec_reuse` | per-thread free list; buffers freed cross-thread land in the consumer's stash |
-| `bytes` | fresh `BytesMut` per batch (`--features bench`) |
-| `opool` | one `opool` pool per power-of-two class (`--features bench`) |
-| `object_pool` | one `object_pool` pool per class (`--features bench`) |
-
-Thread counts sweep `PIPELINE_THREADS` (2/4/8/16 total threads, split
-evenly between producers and consumers); each producer ships 64 batches per
-iteration. Thread spawn cost is excluded via `iter_custom` + a release
-barrier.
+Run all of them (or use `scripts/bench-full.sh` which also writes the
+markdown tables to `target/criterion-tables.md`):
 
 ```bash
-cargo bench --bench pipeline --features bench
+cargo bench --features bench --bench pipeline
+cargo bench --features bench --bench tcp
+cargo bench --features bench --bench file_hash
+cargo bench --features bench --bench framing
+cargo bench --features bench --bench compress
+cargo bench --features bench --bench tiles
+
+# Emit tables only, from existing target/criterion results
+python3 scripts/bench.py --no-run --tables
 ```
 
 ## Reproducing these numbers

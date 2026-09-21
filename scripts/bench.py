@@ -50,39 +50,6 @@ PALETTE = {
 }
 
 
-CURRENT_LINE = LineChart(
-    title="Realistic 64 KiB Write",
-    subtitle="200 ops/thread, lower is better",
-    x_label="Threads",
-    y_label="Latency",
-    x_values=["2", "4", "8", "16"],
-    series=[
-        Series("ZeroPool", [35, 54, 89, 157], PALETTE["zeropool"]),
-        Series("Vec", [272, 299, 388, 624], PALETTE["vec"]),
-        Series("opool", [40, 84, 199, 371], PALETTE["opool"]),
-        Series("object_pool", [45, 102, 295, 1476], PALETTE["object_pool"]),
-    ],
-    output="realistic-write-mt.svg",
-    unit="us",
-)
-
-
-CURRENT_HOT_PATH = BarChart(
-    title="Single-Thread Hot Path",
-    subtitle="64 KiB alloc/drop, no page writes, lower is better",
-    y_label="Time",
-    bars=[
-        ("opool", 15.2, PALETTE["opool"]),
-        ("ZeroPool", 20.2, PALETTE["zeropool"]),
-        ("object_pool", 21.1, PALETTE["object_pool"]),
-        ("bytes", 45.8, PALETTE["bytes"]),
-        ("Vec", 44.5, PALETTE["vec"]),
-    ],
-    output="hot-path.svg",
-    unit="ns",
-)
-
-
 def main() -> None:
     parser = argparse.ArgumentParser(
         prog="bench.py",
@@ -104,14 +71,18 @@ def main() -> None:
         help="generate SVG charts after running benchmarks",
     )
     parser.add_argument(
-        "--current",
-        action="store_true",
-        help="use checked-in README benchmark numbers instead of running cargo bench",
-    )
-    parser.add_argument(
         "--no-run",
         action="store_true",
-        help="do not run cargo bench; only read --criterion-dir when --charts is set",
+        help="do not run cargo bench; only read --criterion-dir when --charts or --tables is set",
+    )
+    parser.add_argument(
+        "--tables",
+        nargs="?",
+        const=REPO_ROOT / "target" / "criterion-tables.md",
+        default=None,
+        type=Path,
+        metavar="PATH",
+        help="emit one markdown table per Criterion group (default: target/criterion-tables.md)",
     )
     parser.add_argument(
         "--criterion-dir",
@@ -128,25 +99,101 @@ def main() -> None:
 
     args = parser.parse_args()
 
-    if args.current:
-        if not args.charts:
-            raise SystemExit("--current requires --charts")
-        write_current(args.out)
-        return
-
-    if args.no_run and not args.charts:
-        raise SystemExit("--no-run requires --charts")
+    if args.no_run and not (args.charts or args.tables):
+        raise SystemExit("--no-run requires --charts or --tables")
 
     if not args.no_run:
         run_bench(args.filter, args.features)
     if args.charts:
         write_from_criterion(args.criterion_dir, args.out)
+    if args.tables is not None:
+        write_tables(args.criterion_dir, args.tables)
 
 
-def write_current(out_dir: Path) -> None:
-    out_dir.mkdir(parents=True, exist_ok=True)
-    write_line_chart(CURRENT_LINE, out_dir / CURRENT_LINE.output)
-    write_bar_chart(CURRENT_HOT_PATH, out_dir / CURRENT_HOT_PATH.output)
+def write_tables(criterion_dir: Path, out_path: Path) -> None:
+    """Walk target/criterion and emit one markdown table per benchmark group.
+
+    Layout: <group>/<function>/<param>/new/estimates.json (falling back to
+    `base/`). Rows are params (sorted numerically when possible), columns are
+    function names, cells are the mean point estimate in human units.
+    """
+    criterion_dir = criterion_dir.resolve()
+    lines = ["# Criterion results\n"]
+    groups: dict[str, dict[str, dict[str, float]]] = {}
+
+    for group_dir in sorted(criterion_dir.iterdir()):
+        if not group_dir.is_dir() or group_dir.name == "report":
+            continue
+        for func_dir in sorted(group_dir.iterdir()):
+            if not func_dir.is_dir():
+                continue
+            # bench_function (no param): <group>/<func>/new|base/estimates.json
+            direct = read_mean_ns(
+                first_existing(func_dir, "new", "base") / "estimates.json"
+                if first_existing(func_dir, "new", "base")
+                else func_dir / "new" / "estimates.json"
+            )
+            if direct is not None:
+                groups.setdefault(group_dir.name, {}).setdefault("—", {})[
+                    func_dir.name
+                ] = direct
+                continue
+            for param_dir in sorted(func_dir.iterdir()):
+                if not param_dir.is_dir():
+                    continue
+                variant = first_existing(param_dir, "new", "base")
+                if variant is None:
+                    continue
+                estimate = read_mean_ns(variant / "estimates.json")
+                if estimate is not None:
+                    groups.setdefault(group_dir.name, {}).setdefault(param_dir.name, {})[
+                        func_dir.name
+                    ] = estimate
+
+    if not groups:
+        raise SystemExit(f"no Criterion results found under {criterion_dir}")
+
+    for group, params in groups.items():
+        functions = sorted({f for p in params.values() for f in p})
+        lines.append(f"## {group}\n")
+        lines.append("| param | " + " | ".join(f"`{f}`" for f in functions) + " |")
+        lines.append("|---|" + "---:|" * len(functions))
+        for param in sorted(params, key=param_sort_key):
+            cells = [
+                format_ns(params[param][f]) if f in params[param] else "—"
+                for f in functions
+            ]
+            lines.append(f"| {param} | " + " | ".join(cells) + " |")
+        lines.append("")
+
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    out_path.write_text("\n".join(lines), encoding="utf-8")
+    print(f"wrote {out_path}")
+
+
+def first_existing(path: Path, *names: str) -> Path | None:
+    for name in names:
+        candidate = path / name
+        if (candidate / "estimates.json").exists():
+            return candidate
+    return None
+
+
+def param_sort_key(param: str) -> tuple[int, object]:
+    try:
+        return (0, float(param.replace("_", "")))
+    except ValueError:
+        return (1, param)
+
+
+def format_ns(ns: float) -> str:
+    if ns < 1_000:
+        return f"{ns:.1f} ns"
+    if ns < 1_000_000:
+        return f"{ns / 1_000:.1f} µs"
+    if ns < 1_000_000_000:
+        return f"{ns / 1_000_000:.2f} ms"
+    return f"{ns / 1_000_000_000:.2f} s"
 
 
 def write_from_criterion(criterion_dir: Path, out_dir: Path) -> None:
