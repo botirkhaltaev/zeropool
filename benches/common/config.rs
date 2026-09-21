@@ -24,6 +24,9 @@ pub const REUSE_STASH_CAP: usize = 8;
 /// (threads = producers + consumers, split evenly).
 pub const PIPELINE_THREADS: &[usize] = &[2, 4, 8, 16];
 
+/// Per-worker thread counts for the other workload benchmarks.
+pub const WORKLOAD_THREADS: &[usize] = &[1, 2, 4, 8];
+
 /// Build a `ZeroPool` configured for workload benchmarks.
 pub fn zeropool() -> ZeroPool {
     ZeroPool::new().min_buffer_size(0).max_buffers_per_class(POOL_CAP_PER_CLASS)
